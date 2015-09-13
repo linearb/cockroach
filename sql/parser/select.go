@@ -50,7 +50,7 @@ func (node *ParenSelect) String() string {
 
 // Select represents a SELECT statement.
 type Select struct {
-	Distinct    string
+	Distinct    Distinct
 	Exprs       SelectExprs
 	From        TableExprs
 	Where       *Where
@@ -61,11 +61,6 @@ type Select struct {
 	Lock        string
 	tableSelect bool
 }
-
-// Select.Distinct
-const (
-	astDistinct = " DISTINCT"
-)
 
 func (node *Select) String() string {
 	if node.tableSelect && len(node.From) == 1 {
@@ -314,6 +309,29 @@ func (node *Order) String() string {
 		return node.Expr.String()
 	}
 	return fmt.Sprintf("%s %s", node.Expr, node.Direction)
+}
+
+// Distinct outputs only the first row for each set of output rows that map to
+// the same evaluated expression values (i.e. belong to the same equivalence class).
+// If the expression list is empty, output a single row for all
+// duplicate output rows (eliminate duplicates).
+type Distinct Exprs
+
+func (node Distinct) String() string {
+	if node == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	fmt.Fprint(&buf, " DISTINCT")
+	prefix := " ON ( "
+	for _, expr := range node {
+		fmt.Fprintf(&buf, "%s%s", prefix, expr)
+		prefix = ", "
+	}
+	if len(node) > 0 {
+		fmt.Fprint(&buf, " )")
+	}
+	return buf.String()
 }
 
 // Limit represents a LIMIT clause.

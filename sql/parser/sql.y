@@ -126,7 +126,8 @@ import "github.com/cockroachdb/cockroach/sql/privilege"
 %type <empty> opt_encoding
 
 %type <tblDefs> opt_table_elem_list table_elem_list
-%type <empty> distinct_clause opt_all_clause
+%type <empty> opt_all_clause
+%type <exprs> distinct_clause
 %type <strs> opt_column_list
 %type <orderBy> sort_clause opt_sort_clause
 %type <orders> sortby_list
@@ -152,8 +153,7 @@ import "github.com/cockroachdb/cockroach/sql/privilege"
 %type <empty> group_by_list
 %type <empty> group_by_item empty_grouping_set
 
-%type <empty> all_or_distinct
-
+%type <boolVal> all_or_distinct
 %type <empty> join_outer
 %type <joinCond> join_qual
 %type <str> join_type
@@ -1613,9 +1613,8 @@ simple_select:
     from_clause where_clause
     group_clause having_clause window_clause
   {
-    // TODO(pmattis): Support DISTINCT ON?
     $$ = &Select{
-      Distinct: astDistinct,
+      Distinct: Distinct($2),
       Exprs:    $3,
       From:     $4,
       Where:    newWhere(astWhere, $5),
@@ -1633,29 +1632,29 @@ simple_select:
   }
 | select_clause UNION all_or_distinct select_clause
   {
-    // TODO(pmattis): Support all/distinct
     $$ = &Union{
       Type:  astUnion,
       Left:  $1,
       Right: $4,
+      All:   $3,
     }
   }
 | select_clause INTERSECT all_or_distinct select_clause
   {
-    // TODO(pmattis): Support all/distinct
     $$ = &Union{
       Type:  astIntersect,
       Left:  $1,
       Right: $4,
+      All:   $3,
     }
   }
 | select_clause EXCEPT all_or_distinct select_clause
   {
-    // TODO(pmattis): Support all/distinct
     $$ = &Union{
       Type:  astExcept,
       Left:  $1,
       Right: $4,
+      All:   $3,
     }
   }
 
@@ -1697,15 +1696,29 @@ opt_table:
 | /* EMPTY */ {}
 
 all_or_distinct:
-  ALL {}
-| DISTINCT {}
-| /* EMPTY */ {}
+  ALL
+  {
+    $$ = true
+  }
+| DISTINCT
+  {
+    $$ = false
+  }
+| /* EMPTY */
+  {
+    $$ = false
+  }
 
-// We use (NIL) as a placeholder to indicate that all target expressions should
-// be placed in the DISTINCT list during parsetree analysis.
+// Use a non-nil empty list to represent DISTINCT without an expression list.
 distinct_clause:
-  DISTINCT {}
-| DISTINCT ON '(' expr_list ')' {}
+  DISTINCT
+  {
+    $$ = Exprs{}
+  }
+| DISTINCT ON '(' expr_list ')'
+  {
+    $$ = $4
+  }
 
 opt_all_clause:
   ALL {}
