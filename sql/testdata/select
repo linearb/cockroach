@@ -214,3 +214,6 @@ SELECT z FROM test.xyzw@unknown WHERE y = 5
 
 query error qualified name "foo.w" not found
 SELECT w FROM test.xyzw@foo WHERE y = 5
+
+statement ok
+INSERT INTO xyz VALUES (2, 5, 6), (3, 2, 3), (5, 2, 6), (6, 3, 5), (7, 2, 9)
