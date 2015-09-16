@@ -242,15 +242,13 @@ func (m *multiTestContext) addStore() {
 	if len(m.engines) > idx {
 		eng = m.engines[idx]
 	} else {
+		// NewInMem calls Open() and adds an extra refcount to the engine so
+		// the underlying rocksdb instances/ aren't closed when stopping and
+		// restarting the stores.
+		// These refcounts are removed in Stop().
 		eng = engine.NewInMem(proto.Attributes{}, 1<<20)
 		m.engines = append(m.engines, eng)
 		needBootstrap = true
-		// Add an extra refcount to the engine so the underlying rocksdb instances
-		// aren't closed when stopping and restarting the stores.
-		// These refcounts are removed in Stop().
-		if err := eng.Open(); err != nil {
-			m.t.Fatal(err)
-		}
 	}
 
 	stopper := stop.NewStopper()
