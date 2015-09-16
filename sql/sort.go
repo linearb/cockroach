@@ -40,82 +40,10 @@ func (p *planner) orderBy(n *parser.Select, s *scanNode) (*sortNode, error) {
 	var ordering []int
 
 	for _, o := range n.OrderBy {
-		index := 0
-
-		// Normalize the expression which has the side-effect of evaluating
-		// constant expressions and unwrapping expressions like "((a))" to "a".
-		expr, err := parser.NormalizeExpr(o.Expr)
+		index, err := s.maybeAddRender(o.Expr)
 		if err != nil {
 			return nil, err
 		}
-
-		if qname, ok := expr.(*parser.QualifiedName); ok {
-			if len(qname.Indirect) == 0 {
-				// Look for an output column that matches the qualified name. This
-				// handles cases like:
-				//
-				//   SELECT a AS b FROM t ORDER BY b
-				target := string(qname.Base)
-				for j, col := range columns {
-					if equalName(target, col) {
-						index = j + 1
-						break
-					}
-				}
-			}
-
-			if index == 0 {
-				// No output column matched the qualified name, so look for an existing
-				// render target that matches the column name. This handles cases like:
-				//
-				//   SELECT a AS b FROM t ORDER BY a
-				if err := qname.NormalizeColumnName(); err != nil {
-					return nil, err
-				}
-				if qname.Table() == "" || equalName(s.desc.Alias, qname.Table()) {
-					for j, r := range s.render {
-						if qval, ok := r.(*qvalue); ok {
-							if equalName(qval.col.Name, qname.Column()) {
-								index = j + 1
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if index == 0 {
-			// The order by expression matched neither an output column nor an
-			// existing render target.
-			if datum, ok := expr.(parser.Datum); ok {
-				// If we evaluated to an int, use that as an index to order by. This
-				// handles cases like:
-				//
-				//   SELECT * FROM t ORDER BY 1
-				i, ok := datum.(parser.DInt)
-				if !ok {
-					return nil, fmt.Errorf("invalid ORDER BY: %s", expr)
-				}
-				index = int(i)
-				if index < 1 || index > len(columns) {
-					return nil, fmt.Errorf("invalid ORDER BY index: %d not in range [1, %d]",
-						index, len(columns))
-				}
-			} else {
-				// Add a new render expression to use for ordering. This handles cases
-				// were the expression is either not a qualified name or is a qualified
-				// name that is otherwise not referenced by the query:
-				//
-				//   SELECT a FROM t ORDER by b
-				//   SELECT a, b FROM t ORDER by a+b
-				if err := s.addRender(parser.SelectExpr{Expr: expr}); err != nil {
-					return nil, err
-				}
-				index = len(s.columns)
-			}
-		}
-
 		if o.Direction == parser.Descending {
 			index = -index
 		}
@@ -126,11 +54,12 @@ func (p *planner) orderBy(n *parser.Select, s *scanNode) (*sortNode, error) {
 }
 
 type sortNode struct {
-	plan     planNode
-	columns  []string
-	ordering []int
-	needSort bool
-	err      error
+	plan        planNode
+	columns     []string
+	ordering    []int
+	needSort    bool
+	dontPresent bool
+	err         error
 }
 
 func (n *sortNode) Columns() []string {
@@ -146,7 +75,11 @@ func (n *sortNode) Ordering() []int {
 
 func (n *sortNode) Values() parser.DTuple {
 	// If an ordering expression was used the number of columns in each row might
-	// differ from the number of columns requested, so trim the result.
+	// differ from the number of columns requested, so trim the result if sort is
+	// presenting the results.
+	if n.dontPresent {
+		return n.plan.Values()
+	}
 	v := n.plan.Values()
 	return v[:len(n.columns)]
 }

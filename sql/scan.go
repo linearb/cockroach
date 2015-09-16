@@ -113,7 +113,9 @@ type scanNode struct {
 	visibleCols      []ColumnDescriptor
 	isSecondaryIndex bool
 	reverse          bool
+	// includes columns added by ORDER BY and DISTINCT ON.
 	columns          []string
+	resultColumns    []string
 	columnIDs        []ColumnID
 	ordering         []int
 	err              error
@@ -367,6 +369,7 @@ func (n *scanNode) initTargets(targets parser.SelectExprs) error {
 			return n.err
 		}
 	}
+	n.resultColumns = n.columns
 	return nil
 }
 
@@ -407,6 +410,79 @@ func (n *scanNode) computeOrdering(columnIDs []ColumnID) []int {
 		}
 	}
 	return ordering
+}
+
+// maybeAddRender adds expr to the list of rendered expressions if it
+// doesn't already exist. It returns the index of the column representing the
+// expression.
+func (n *scanNode) maybeAddRender(expr parser.Expr) (int, error) {
+	// Normalize the expression which has the side-effect of evaluating
+	// constant expressions and unwrapping expressions like "((a))" to "a".
+	expr, err := parser.NormalizeExpr(expr)
+	if err != nil {
+		return -1, err
+	}
+
+	if qname, ok := expr.(*parser.QualifiedName); ok {
+		if len(qname.Indirect) == 0 {
+			// Look for an output column that matches the qualified name. This
+			// handles cases like:
+			//
+			//   SELECT a AS b FROM t ORDER BY b
+			target := string(qname.Base)
+			for j, col := range n.resultColumns {
+				if equalName(target, col) {
+					return j + 1, nil
+				}
+			}
+		}
+
+		// No output column matched the qualified name, so look for an existing
+		// render target that matches the column name. This handles cases like:
+		//
+		//   SELECT a AS b FROM t ORDER BY a
+		if err := qname.NormalizeColumnName(); err != nil {
+			return -1, err
+		}
+		if qname.Table() == "" || equalName(n.desc.Alias, qname.Table()) {
+			for j, r := range n.render {
+				if qval, ok := r.(*qvalue); ok {
+					if equalName(qval.col.Name, qname.Column()) {
+						return j + 1, nil
+					}
+				}
+			}
+		}
+	}
+
+	// The expression matched neither an output column nor an
+	// existing render target.
+	if datum, ok := expr.(parser.Datum); ok {
+		// If we evaluated to an int, use that as an index to order by. This
+		// handles cases like:
+		//
+		//   SELECT * FROM t ORDER BY 1
+		i, ok := datum.(parser.DInt)
+		if !ok {
+			return -1, fmt.Errorf("invalid ORDER BY: %s", expr)
+		}
+		index := int(i)
+		if index < 1 || index > len(n.resultColumns) {
+			return -1, fmt.Errorf("invalid ORDER BY index: %d not in range [1, %d]",
+				index, len(n.resultColumns))
+		}
+		return index, nil
+	}
+	// Add a new render expression to use for ordering. This handles cases
+	// were the expression is either not a qualified name or is a qualified
+	// name that is otherwise not referenced by the query:
+	//
+	//   SELECT a FROM t ORDER by b
+	//   SELECT a, b FROM t ORDER by a+b
+	if err := n.addRender(parser.SelectExpr{Expr: expr}); err != nil {
+		return -1, err
+	}
+	return len(n.columns), nil
 }
 
 func (n *scanNode) addRender(target parser.SelectExpr) error {
