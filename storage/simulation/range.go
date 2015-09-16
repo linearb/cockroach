@@ -116,7 +116,7 @@ func (r *Range) splitRange(originalRange *Range) {
 	stores := originalRange.getStores()
 	r.Lock()
 	defer r.Unlock()
-	r.desc.Replicas = desc.Replicas
+	r.desc.Replicas = append([]proto.Replica(nil), desc.Replicas...)
 	r.stores = stores
 }
 

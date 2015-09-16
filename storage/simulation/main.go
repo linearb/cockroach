@@ -37,5 +37,10 @@ func main() {
 		c.splitRangeRandom()
 	}
 
-	fmt.Printf("Cluster Info:\n%s\n", c)
+	//	fmt.Printf("Cluster Info:\n%s\n", c)
+
+	fmt.Printf("Epoch Info:\n")
+	fmt.Println(c.StringEpochHeader())
+	fmt.Println(c.StringEpoch())
+
 }
